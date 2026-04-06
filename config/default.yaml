@@ -1,0 +1,190 @@
+# KRX AutoTrader 기본 설정 - v2.0 (Wall Street Grade)
+app:
+  name: "KRX AutoTrader"
+  version: "2.0.0"
+  mode: "live"
+  language: "ko"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+
+broker:
+  type: "kiwoom"
+  kiwoom:
+    live:
+      base_url: "https://openapi.kiwoom.com/v1"
+      app_key: ""
+      app_secret: ""
+      account: ""
+    allowed_ips: []
+    rate_limit:
+      requests_per_second: 5
+      requests_per_minute: 100
+
+trading:
+  market_hours:
+    open: "09:00"
+    close: "15:30"
+    pre_market_start: "08:30"
+    post_market_end: "16:00"
+    cool_down_minutes: 15       # 장 시작 후 대기
+  
+  watchlist:
+    - ticker: "005490"
+      name: "포스코홀딩스"
+    - ticker: "005930"
+      name: "삼성전자"
+    - ticker: "000660"
+      name: "SK하이닉스"
+    - ticker: "035420"
+      name: "NAVER"
+    - ticker: "051910"
+      name: "LG화학"
+
+risk:
+  max_daily_loss_pct: 3.0
+  max_position_pct: 20.0
+  max_drawdown_pct: 10.0
+  max_order_loss_pct: 2.0
+  slippage_limit_pct: 0.5
+  market_open_cool_down_minutes: 15
+  max_avg_down_count: 2
+  kill_switch_enabled: true
+  min_confidence: 40              # 최소 신뢰도
+
+strategy:
+  bottom_detection:
+    lookback_days: 120
+    ma_periods: [5, 20, 60, 120]
+    rsi_period: 14
+    rsi_oversold: 30
+    volume_decline_threshold: 0.5
+    support_proximity_pct: 3.0
+  
+  # AI 가중치 시스템 (레짐별 동적 조정)
+  alpha_weights:
+    default:
+      technical: 0.15
+      factor: 0.20
+      ml_ensemble: 0.20
+      deep_learning: 0.10
+      sentiment: 0.10
+      supply_demand: 0.15
+      macro: 0.10
+    bull:
+      technical: 0.10
+      factor: 0.15
+      ml_ensemble: 0.25
+      deep_learning: 0.15
+      sentiment: 0.10
+      supply_demand: 0.15
+      macro: 0.10
+    bear:
+      technical: 0.15
+      factor: 0.25
+      ml_ensemble: 0.15
+      deep_learning: 0.05
+      sentiment: 0.15
+      supply_demand: 0.15
+      macro: 0.10
+
+  scoring:
+    bottom_weight: 0.25
+    trend_weight: 0.20
+    momentum_weight: 0.15
+    supply_demand_weight: 0.15
+    event_risk_weight: 0.10
+    market_risk_weight: 0.15
+  
+  entry:
+    min_bottom_score: 60
+    min_confidence: 50
+    min_alpha_score: 60           # 알파 점수 최소값
+    first_buy_pct: 5.0
+    avg_down_1_pct: 3.0
+    avg_down_2_pct: 5.0
+  
+  exit:
+    exit_1_target_pct: 5.0
+    exit_2_target_pct: 10.0
+    trailing_stop_pct: 3.0
+    hard_stop_pct: 8.0
+
+  execution:
+    default_algo: "VWAP"          # TWAP / VWAP / MARKET / ICEBERG
+    max_participation_rate: 0.05  # 일거래량 대비 최대 참여율
+    urgency: "보통"                # 긴급/보통/여유
+
+# ML/AI 설정
+ml:
+  model_dir: "data/models"
+  retrain_interval_days: 7
+  min_train_samples: 200
+  prediction_horizon_days: 5
+  
+  ensemble:
+    xgboost:
+      n_estimators: 300
+      max_depth: 6
+      learning_rate: 0.05
+    lightgbm:
+      n_estimators: 300
+      max_depth: 6
+      learning_rate: 0.05
+    random_forest:
+      n_estimators: 200
+      max_depth: 8
+
+  deep_learning:
+    seq_length: 30
+    hidden_size: 64
+    num_layers: 2
+    epochs: 50
+
+# 팩터 모델
+factors:
+  weights:
+    value: 0.20
+    quality: 0.25
+    momentum: 0.20
+    low_vol: 0.15
+    size: 0.05
+    growth: 0.15
+
+# 유니버스 스크리닝
+screening:
+  min_market_cap: 300000000000    # 3000억
+  min_avg_volume: 100000
+  max_per: 50
+  include_markets: ["KOSPI", "KOSDAQ"]
+  exclude_sectors: []
+
+# 포트폴리오 최적화
+portfolio:
+  optimization_method: "risk_parity"  # mean_variance / risk_parity / black_litterman
+  risk_free_rate: 0.035
+  max_positions: 15
+  rebalance_threshold_pct: 5         # 비중 5% 이상 차이시 리밸런싱
+
+# 데이터 소스
+data_sources:
+  dart_api_key: ""                   # DART 공시
+  naver_client_id: ""                 # 네이버 뉴스
+  naver_client_secret: ""
+  koreaexim_api_key: ""              # 한국수출입은행 (환율)
+
+notifications:
+  internal: true
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+
+database:
+  type: "sqlite"
+  sqlite:
+    path: "data/autotrader.db"

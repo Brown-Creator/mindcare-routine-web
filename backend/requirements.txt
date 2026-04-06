@@ -1,0 +1,23 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+pydantic==2.9.0
+pydantic-settings==2.5.0
+httpx==0.27.0
+websockets==12.0
+pyyaml==6.0.2
+numpy==1.26.4
+pandas==2.2.2
+apscheduler==3.10.4
+aiosqlite==0.20.0
+python-dotenv==1.0.1
+
+# ML/AI 모듈
+scikit-learn==1.5.0
+xgboost==2.0.3
+lightgbm==4.3.0
+
+# 딥러닝 (선택사항 - 없으면 sklearn MLP 대체)
+# torch>=2.0.0
+
+# 데이터 수집
+# pykrx>=1.0.45   # KRX 데이터 (선택사항)

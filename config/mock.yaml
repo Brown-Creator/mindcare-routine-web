@@ -1,0 +1,14 @@
+# Mock 모드 설정 (개발/테스트용)
+app:
+  mode: "mock"
+
+broker:
+  type: "mock"
+
+trading:
+  initial_capital: 100000000  # 1억원
+
+mock:
+  price_update_interval_ms: 2000
+  volatility_factor: 0.02
+  enable_random_events: true
