@@ -52,4 +52,13 @@ export const api = {
 
   // 백테스트
   runBacktest: (params) => postJSON('/backtest/run', params),
+
+  // 퀀트 분석 (★ 신규 계량 코어)
+  getQuantSummary: () => fetchJSON('/quant/summary'),
+  getQuantPortfolio: (method = 'max_sharpe', maxWeight = 0.30) =>
+    fetchJSON(`/quant/portfolio?method=${method}&max_weight=${maxWeight}`),
+  getQuantRisk: () => fetchJSON('/quant/risk'),
+  getQuantCosts: () => fetchJSON('/quant/costs'),
+  getQuantSignificance: (nTrials = 50) => fetchJSON(`/quant/significance?n_trials=${nTrials}`),
+  getQuantLiveResearch: (n = 8, days = 300) => fetchJSON(`/quant/live-research?n=${n}&days=${days}`),
 };

@@ -11,13 +11,30 @@ apscheduler==3.10.4
 aiosqlite==0.20.0
 python-dotenv==1.0.1
 
-# ML/AI 모듈
-scikit-learn==1.5.0
+# ─── 퀀트 코어 (backend/quant) 필수 의존성 ───
+# 횡단면 표준화 / Ledoit-Wolf 수축 / 볼록 최적화(SLSQP) / Cornish-Fisher VaR /
+# Deflated·Probabilistic Sharpe / Purged-CV / Kelly 사이징은 모두 numpy+scipy로 구현.
+# (별도 cvxpy 불필요 — scipy.optimize 로 충분.)
+scipy>=1.11.0
+
+# ML/AI 모듈 (선택사항 — 미설치 시 ML 앙상블은 자동 우회, 시스템은 정상 가동)
+scikit-learn==1.5.0       # RandomForest + (미사용 시) 폴백
 xgboost==2.0.3
 lightgbm==4.3.0
 
 # 딥러닝 (선택사항 - 없으면 sklearn MLP 대체)
 # torch>=2.0.0
 
-# 데이터 수집
-# pykrx>=1.0.45   # KRX 데이터 (선택사항)
+# LLM 분석 (선택사항 - API 키 필요)
+openai>=1.30.0            # GPT-4o-mini 뉴스 분석
+
+# 데이터 수집 (선택사항)
+# pykrx>=1.0.45           # KRX 일봉/분봉 데이터
+# dart-fss>=0.1.0         # DART API 래퍼
+
+# 하이퍼파라미터 튜닝 / 모니터링 (선택사항)
+# optuna>=3.0.0
+# prometheus-client>=0.20.0
+
+# 테스트
+# pytest>=8.0.0           # backend/tests (없어도 `python -m backend.tests.test_quant` 로 실행 가능)

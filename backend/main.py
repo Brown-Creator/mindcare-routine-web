@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api import (
     dashboard_router, stocks_router, orders_router,
     strategy_router, settings_router, killswitch_router, ws_router,
-    backtest_router
+    backtest_router, quant_router
 )
 from backend.config import config
 
@@ -55,7 +55,25 @@ async def lifespan(app: FastAPI):
     _engines['news'] = news_engine
     _engines['calendar'] = calendar
     _engines['flow'] = flow_analyzer
-    logger.info("✅ Phase 1: 데이터 파이프라인 초기화 완료")
+
+    # ★ 고도화: DART API 클라이언트 (재무데이터 + 공시)
+    from backend.data.dart_client import get_dart_client
+    dart_api_key = config.get("api", "dart_api_key", default="")
+    dart_client = get_dart_client(api_key=dart_api_key)
+    _engines['dart'] = dart_client
+
+    # ★ 고도화: LLM 뉴스 심층 분석
+    from backend.data.llm_news_analyzer import get_llm_analyzer
+    openai_key = config.get("api", "openai_api_key", default="")
+    llm_analyzer = get_llm_analyzer(openai_api_key=openai_key)
+    _engines['llm'] = llm_analyzer
+
+    # ★ 고도화: ML 모델 드리프트 모니터
+    from backend.ml.model_monitor import get_monitor
+    for model_name in ['xgboost', 'lightgbm', 'lstm']:
+        _engines[f'monitor_{model_name}'] = get_monitor(model_name)
+
+    logger.info("✅ Phase 1: 데이터 파이프라인 초기화 완료 (★DART+LLM+드리프트 모니터 포함)")
 
     # ─── Phase 2: 매크로/레짐 감지 ───
     from backend.engines.regime_detector import RegimeDetector
@@ -121,12 +139,59 @@ async def lifespan(app: FastAPI):
 
     # ─── 백그라운드 태스크 ───
     task = asyncio.create_task(system_heartbeat())
+
+    # ─── 스케줄러: 팩터 가중치 주기 재보정 (config 플래그로 가드, 기본 OFF) ───
+    scheduler = None
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        scheduler = AsyncIOScheduler()
+        if config.get("jobs", "auto_recalibrate", default=False):
+            day = config.get("jobs", "recalibrate_day_of_week", default="sun")
+            hour = config.get("jobs", "recalibrate_hour", default=6)
+            scheduler.add_job(scheduled_recalibration, "cron",
+                              day_of_week=day, hour=hour, id="factor_recalibration")
+            logger.info(f"📅 팩터 재보정 스케줄 등록: 매주 {day} {hour}시")
+        scheduler.start()
+        _engines["scheduler"] = scheduler
+    except Exception as e:
+        logger.warning(f"스케줄러 초기화 건너뜀: {e}")
+
     logger.info("🏦 KRX AutoTrader 준비 완료 - 모든 엔진 가동 중")
 
     yield
 
     task.cancel()
+    if scheduler:
+        scheduler.shutdown(wait=False)
     logger.info("🛑 KRX AutoTrader 종료")
+
+
+async def scheduled_recalibration():
+    """주기 팩터 재보정 — 실 KRX 데이터로 가중치 갱신 후 factor 엔진에 반영."""
+    from datetime import datetime, timedelta
+    from backend.data.krx_loader import KRXDataLoader
+    from backend.jobs.recalibration import recalibrate_factor_weights
+    from backend.api.quant import _LIVE_UNIVERSE
+
+    logger.info("🔁 팩터 가중치 재보정 시작…")
+    loader = KRXDataLoader()
+    if not loader.available():
+        logger.warning("pykrx 미설치 — 재보정 건너뜀")
+        return
+    now = datetime.now()
+    end = now.strftime("%Y%m%d")
+    start = (now - timedelta(days=750)).strftime("%Y%m%d")
+    factor_model = _engines.get("factor")
+    if factor_model is None:
+        return
+    try:
+        res = await asyncio.to_thread(
+            recalibrate_factor_weights, loader, _LIVE_UNIVERSE, factor_model,
+            start, end, 20, 250, 20, True, True,
+        )
+        logger.info(f"✅ 팩터 재보정 완료: {res.get('applied_weights')}")
+    except Exception as e:
+        logger.error(f"팩터 재보정 실패: {e}")
 
 
 async def system_heartbeat():
@@ -183,6 +248,7 @@ app.include_router(settings_router)
 app.include_router(killswitch_router)
 app.include_router(ws_router)
 app.include_router(backtest_router)
+app.include_router(quant_router)
 
 
 @app.get("/")

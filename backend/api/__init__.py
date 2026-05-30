@@ -6,3 +6,4 @@ from .settings import router as settings_router
 from .killswitch import router as killswitch_router
 from .ws import router as ws_router
 from .backtest import router as backtest_router
+from .quant import router as quant_router
