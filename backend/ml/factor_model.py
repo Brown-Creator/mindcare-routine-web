@@ -254,19 +254,25 @@ class MultiFactorModel:
             )
 
         # ─ 그룹별 횡단면 z (구성요소 평균 후 재표준화) ─
-        value_z = xs.zscore(pd.concat([std("earnings_yield"), std("book_yield"),
-                                       std("dividend_yield")], axis=1).mean(axis=1))
-        quality_z = xs.zscore(pd.concat([std("roe"), std("roa"),
-                                         std("operating_margin"),
-                                         std("debt_ratio", higher_is_better=False)],
-                                        axis=1).mean(axis=1))
-        momentum_z = std("momentum_12_1")
-        lowvol_z = std("realized_vol", higher_is_better=False)
-        growth_z = xs.zscore(pd.concat([std("revenue_growth"), std("eps_growth")],
-                                       axis=1).mean(axis=1))
-        # 사이즈는 자기 자신을 중립화하지 않음
-        size_z = xs.standardize_factor(panel["log_mktcap"], method="rank",
-                                       winsor="mad", higher_is_better=False)
+        # 펀더멘털이 전부 결측이면 해당 그룹이 all-NaN 이 되어 numpy 가
+        # 'Mean of empty slice' 경고를 낸다(가격기반 팩터로 폴백하는 정상 동작).
+        # 이는 실데이터 운용 시 흔한 조건이므로 이 계산 구간에서만 조용히 처리한다.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            value_z = xs.zscore(pd.concat([std("earnings_yield"), std("book_yield"),
+                                           std("dividend_yield")], axis=1).mean(axis=1))
+            quality_z = xs.zscore(pd.concat([std("roe"), std("roa"),
+                                             std("operating_margin"),
+                                             std("debt_ratio", higher_is_better=False)],
+                                            axis=1).mean(axis=1))
+            momentum_z = std("momentum_12_1")
+            lowvol_z = std("realized_vol", higher_is_better=False)
+            growth_z = xs.zscore(pd.concat([std("revenue_growth"), std("eps_growth")],
+                                           axis=1).mean(axis=1))
+            # 사이즈는 자기 자신을 중립화하지 않음
+            size_z = xs.standardize_factor(panel["log_mktcap"], method="rank",
+                                           winsor="mad", higher_is_better=False)
 
         factor_zs = {
             "value": value_z, "quality": quality_z, "momentum": momentum_z,

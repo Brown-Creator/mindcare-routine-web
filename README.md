@@ -61,13 +61,24 @@ frontend/src/pages/QuantAnalytics.jsx   # 퀀트 진단지표 시각화 (/quant)
 1. `cd frontend && npm install`
 2. `npm run dev`
 
-### 테스트 (퀀트 코어 정확성 검증, 총 46개)
+### 리서치 워크플로 (재현 가능한 단일 명령)
+```bash
+python -m backend.research                 # 합성 유니버스 (네트워크 불필요)
+python -m backend.research --live --n 10   # 실 KRX 데이터 (pykrx)
+python -m backend.research --apply         # 보정 가중치 영속화 → 다음 부팅 반영
+```
+유니버스 → 다기간 팩터 IC 백테스트 → ICIR 가중치 보정 → 공분산 수축 + 볼록 최적화 → 리포트.
+
+### 테스트 (정확성 검증, 총 58개 / 8개 스위트)
 ```bash
 python -m backend.tests.test_quant            # 26 — 코어 수학적 성질
 python -m backend.tests.test_factor_research  #  5 — IC/분위 스프레드
 python -m backend.tests.test_ml_pipeline      #  3 — purged WF-CV (ML 라이브러리 필요)
 python -m backend.tests.test_costs            #  7 — 거래비용·시장충격
-python -m backend.tests.test_krx_loader       #  5 — 데이터 어댑터(오프라인)
+python -m backend.tests.test_krx_loader       #  8 — 데이터 어댑터 + DART(오프라인)
+python -m backend.tests.test_factor_backtest  #  4 — 다기간 IC 백테스트
+python -m backend.tests.test_recalibration    #  3 — 가중치 재보정/영속화
+python -m backend.tests.test_integration      #  2 — 전체 파이프라인 합성
 # pytest 로도 실행 가능: pytest backend/tests -q
 ```
 
