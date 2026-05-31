@@ -37,6 +37,8 @@ class CVaRResult:
     cvar_99: float = 0.0         # 99% CVaR
     var_95_pct: float = 0.0      # 95% VaR (%)
     var_99_pct: float = 0.0      # 99% VaR (%)
+    cvar_95_pct: float = 0.0     # 95% CVaR (%)  ← 누락되어 있던 필드(소비측에서 참조)
+    cvar_99_pct: float = 0.0     # 99% CVaR (%)  ← 동일
     # ★ Cornish-Fisher (왜도·첨도 보정) — 팻테일을 반영한 modified VaR/ES
     var_cf_99_pct: float = 0.0   # 99% Cornish-Fisher VaR (%)
     cvar_cf_99_pct: float = 0.0  # 99% Cornish-Fisher CVaR (%)
@@ -289,6 +291,8 @@ class LiveRiskEngine(BaseRiskEngine):
             cvar_99=cvar_99,
             var_95_pct=round(abs(var_95) * 100, 3),
             var_99_pct=round(abs(var_99) * 100, 3),
+            cvar_95_pct=round(abs(cvar_95) * 100, 3),
+            cvar_99_pct=round(abs(cvar_99) * 100, 3),
             var_cf_99_pct=round(var_cf_99 * 100, 3),
             cvar_cf_99_pct=round(cvar_cf_99 * 100, 3),
             method="historical",
@@ -314,12 +318,15 @@ class LiveRiskEngine(BaseRiskEngine):
         losses_99 = simulated[simulated <= var_99]
         losses_95 = simulated[simulated <= var_95]
 
+        cvar_95 = float(losses_95.mean()) if len(losses_95) > 0 else var_95
+        cvar_99 = float(losses_99.mean()) if len(losses_99) > 0 else var_99
         return CVaRResult(
             var_95=var_95, var_99=var_99,
-            cvar_95=float(losses_95.mean()) if len(losses_95) > 0 else var_95,
-            cvar_99=float(losses_99.mean()) if len(losses_99) > 0 else var_99,
+            cvar_95=cvar_95, cvar_99=cvar_99,
             var_95_pct=round(abs(var_95) * 100, 3),
             var_99_pct=round(abs(var_99) * 100, 3),
+            cvar_95_pct=round(abs(cvar_95) * 100, 3),
+            cvar_99_pct=round(abs(cvar_99) * 100, 3),
             method="monte_carlo",
             lookback_days=n_simulations,
         )
