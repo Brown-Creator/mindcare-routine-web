@@ -72,8 +72,12 @@ class AlphaEngine:
         self._weights = self.DEFAULT_WEIGHTS.copy()
 
     def set_regime(self, regime: str):
-        """시장 레짐에 따른 가중치 조정"""
+        """시장 레짐에 따른 가중치 조정 (하위호환용 — generate_alpha는 지역 가중치 사용)"""
         self._weights = self.REGIME_WEIGHTS.get(regime, self.DEFAULT_WEIGHTS).copy()
+
+    def _regime_weights(self, regime: str) -> dict:
+        """레짐별 가중치의 '새 복사본'을 반환 — 인스턴스 상태를 건드리지 않아 동시 호출에 안전."""
+        return dict(self.REGIME_WEIGHTS.get(regime, self.DEFAULT_WEIGHTS))
 
     def generate_alpha(self, ticker: str, name: str = "",
                        technical: dict = None,
@@ -87,7 +91,8 @@ class AlphaEngine:
                        regime: str = "sideways") -> AlphaSignal:
         """종합 알파 시그널 생성"""
 
-        self.set_regime(regime)
+        # 인스턴스 상태가 아닌 '지역 가중치'를 사용 → async 동시 평가 시 상호 간섭 없음
+        weights = self._regime_weights(regime)
         signal = AlphaSignal(ticker=ticker, name=name)
 
         # ─── 1. 기술적 점수 (기존 strategy 결과 활용) ───
@@ -106,9 +111,9 @@ class AlphaEngine:
             prob = ml_prediction.get("probability", 0.5)
             conf = ml_prediction.get("confidence", 0)
             signal.ml_score = prob * 100
-            # ML 신뢰도가 낮으면 가중치 축소
+            # ML 신뢰도가 낮으면 가중치 축소 (지역 가중치만 수정)
             if conf < 0.3:
-                self._weights["ml"] *= 0.5
+                weights["ml"] *= 0.5
 
         # ─── 4. 딥러닝 점수 ───
         if deep_prediction:
@@ -158,8 +163,8 @@ class AlphaEngine:
             "macro": signal.macro_score,
         }
 
-        weighted_sum = sum(scores[k] * self._weights[k] for k in scores)
-        total_weight = sum(self._weights[k] for k in scores)
+        weighted_sum = sum(scores[k] * weights[k] for k in scores)
+        total_weight = sum(weights[k] for k in scores)
         signal.alpha_score = weighted_sum / total_weight if total_weight > 0 else 50
 
         # 이벤트 리스크 감산
@@ -183,10 +188,16 @@ class AlphaEngine:
             signal.direction = "중립"
             signal.strength = "약"
 
-        # 신뢰도 = 시그널 합의도
-        score_values = list(scores.values())
-        signal.confidence = 1 - (np.std(score_values) / 50)
-        signal.confidence = round(max(0, min(1, signal.confidence)), 3)
+        # 신뢰도 = 방향 일치도 × 확신도(중립 이탈)의 기하평균.
+        # 기존 (1 - std/50) 은 모든 시그널이 50(중립)일 때 신뢰도 1을 주는 결함이 있었다.
+        # 진짜 확신은 (a) 시그널들이 같은 방향을 가리키고 (b) 합성점수가 중립에서
+        # 충분히 떨어져 있을 때만 높아야 한다.
+        signs = {k: np.sign(scores[k] - 50) for k in scores}
+        agree_den = sum(weights[k] for k in scores)
+        agreement = (abs(sum(weights[k] * signs[k] for k in scores)) / agree_den
+                     if agree_den > 0 else 0.0)
+        conviction = min(1.0, abs(signal.alpha_score - 50) / 25.0)
+        signal.confidence = round(float(np.sqrt(max(agreement, 0.0) * conviction)), 3)
 
         # 포지션 크기 제안 (알파 * 신뢰도 * 레짐 리스크)
         regime_mult = {"bull": 1.2, "bear": 0.5, "sideways": 0.8}.get(regime, 1.0)

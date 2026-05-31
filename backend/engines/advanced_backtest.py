@@ -13,6 +13,9 @@ import logging
 
 from backend.indicators import calculate_all_indicators
 from backend.strategies import evaluate_all_strategies
+from backend.quant import validation as qval
+from backend.quant import metrics as qmet
+from backend.quant.costs import CostModel
 
 logger = logging.getLogger(__name__)
 
@@ -21,18 +24,45 @@ class BacktestConfig:
     initial_capital: float = 100_000_000
     commission_rate: float = 0.00015   # 매매 수수료 0.015%
     tax_rate: float = 0.0023           # 거래세 0.23% (매도시)
-    slippage_pct: float = 0.05         # 슬리피지 0.05%
+    slippage_pct: float = 0.05         # 슬리피지 0.05% (flat, 레거시)
     max_position_pct: float = 0.20     # 최대 종목당 20%
     entry_threshold: float = 60
     exit_profit_pct: float = 5.0
     hard_stop_pct: float = 7.0
     trailing_stop_pct: float = 3.0
+    # ★ 백테스트 과적합 보정용: 전략 탐색 과정에서 시도한 구성(설정조합)의 수.
+    #    Deflated Sharpe Ratio 계산에 사용 — 많이 시도했을수록 허들이 높아진다.
+    n_trials: int = 1
+    # ★ 제곱근 시장충격 모델 사용 여부. True면 flat slippage 대신
+    #    (절반 스프레드 + η·σ·√(Q/ADV)) 를 체결가 슬리피지로 적용 → 용량/회전율
+    #    효과를 현실적으로 반영(거래량 대비 큰 주문일수록 비싸진다).
+    use_impact_model: bool = False
+    cost_model: CostModel = None
 
 class AdvancedBacktestEngine:
     """고급 백테스트 엔진"""
 
     def __init__(self, config: BacktestConfig = None):
         self.config = config or BacktestConfig()
+
+    def _slippage_frac(self, df: pd.DataFrame, i: int, qty: int, side: str) -> float:
+        """
+        체결가에 적용할 슬리피지 분율.
+        - 기본(레거시): 고정 slippage_pct.
+        - use_impact_model=True: 절반 스프레드 + 제곱근 시장충격
+          (η·σ·√(Q/ADV)). 거래량(ADV)·변동성(σ)은 직전 20일에서 추정.
+        """
+        if not self.config.use_impact_model:
+            return self.config.slippage_pct / 100.0
+        cm = self.config.cost_model or CostModel()
+        lo = max(0, i - 20)
+        vol_window = df['volume'].iloc[lo:i]
+        adv = float(vol_window.mean()) if len(vol_window) else 0.0
+        ret = df['close'].iloc[lo:i + 1].pct_change().dropna()
+        dvol = float(ret.std()) if len(ret) > 2 else 0.02
+        half_spread = cm.half_spread_bps / 1e4
+        impact = cm.market_impact_fraction(qty, adv, dvol)
+        return half_spread + impact
 
     def run(self, df_history: pd.DataFrame, ticker: str) -> dict:
         """기본 백테스트 실행 (수수료/슬리피지 포함)"""
@@ -63,7 +93,8 @@ class AdvancedBacktestEngine:
             # 매수 (수수료+슬리피지 반영)
             if holdings == 0 and sb > self.config.entry_threshold and st > 40:
                 invest = capital * self.config.max_position_pct
-                exec_price = price * (1 + self.config.slippage_pct / 100)
+                qty_est = int(invest / price) if price > 0 else 0
+                exec_price = price * (1 + self._slippage_frac(df, i, qty_est, "buy"))
                 commission = invest * self.config.commission_rate
                 qty = int((invest - commission) / exec_price)
                 if qty > 0:
@@ -80,7 +111,8 @@ class AdvancedBacktestEngine:
             # 물타기
             elif holdings > 0 and price < avg_price * 0.95 and sb > 70:
                 invest = capital * 0.3
-                exec_price = price * (1 + self.config.slippage_pct / 100)
+                qty_est = int(invest / price) if price > 0 else 0
+                exec_price = price * (1 + self._slippage_frac(df, i, qty_est, "buy"))
                 commission = invest * self.config.commission_rate
                 qty = int((invest - commission) / exec_price)
                 if qty > 0:
@@ -122,7 +154,7 @@ class AdvancedBacktestEngine:
                     reason = f"손절 ({profit_pct:.1f}%)"
 
                 if should_sell:
-                    exec_price = price * (1 - self.config.slippage_pct / 100)
+                    exec_price = price * (1 - self._slippage_frac(df, i, holdings, "sell"))
                     proceeds = holdings * exec_price
                     commission = proceeds * self.config.commission_rate
                     tax = proceeds * self.config.tax_rate
@@ -208,16 +240,33 @@ class AdvancedBacktestEngine:
         if not returns:
             return {"error": "매도 거래 없음"}
 
-        # 부트스트랩 시뮬레이션
+        # ★ 정상(stationary) 블록 부트스트랩.
+        #   iid 재추출(np.random.choice)은 거래 수익률의 '연속성(연승/연패 군집)'을
+        #   파괴해 위험을 과소평가한다. 평균 블록길이 b 의 기하분포 블록을 이어붙여
+        #   자기상관 구조를 보존한다(Politis-Romano).
+        returns = np.array(returns, dtype=float)
+        n = len(returns)
+        avg_block = max(2, int(round(n ** (1 / 3))))   # 경험적 최적 블록길이 ~ n^(1/3)
+        p_new = 1.0 / avg_block
+        rng = np.random.default_rng(42)
         final_returns = []
         for _ in range(n_simulations):
-            sampled = np.random.choice(returns, size=len(returns), replace=True)
-            cumulative = np.prod(1 + np.array(sampled) / 100) - 1
+            sampled = np.empty(n)
+            idx = rng.integers(0, n)
+            for i in range(n):
+                if i == 0 or rng.random() < p_new:
+                    idx = rng.integers(0, n)         # 새 블록 시작
+                else:
+                    idx = (idx + 1) % n              # 같은 블록 연장(순환)
+                sampled[i] = returns[idx]
+            cumulative = np.prod(1 + sampled / 100) - 1
             final_returns.append(cumulative * 100)
 
         final_returns = np.array(final_returns)
         return {
             "n_simulations": n_simulations,
+            "bootstrap_method": "stationary_block",
+            "avg_block_length": avg_block,
             "mean_return": round(np.mean(final_returns), 2),
             "median_return": round(np.median(final_returns), 2),
             "std_return": round(np.std(final_returns), 2),
@@ -248,17 +297,16 @@ class AdvancedBacktestEngine:
         eq['dd'] = (eq['value'] - eq['peak']) / eq['peak']
         mdd = eq['dd'].min() * 100
 
-        # Sharpe (연율화, rf=3.5%)
-        excess = daily_ret - 0.035 / 252
-        sharpe = (excess.mean() / excess.std() * np.sqrt(252)) if excess.std() > 0 else 0
-
-        # Sortino
-        downside = daily_ret[daily_ret < 0].std()
-        sortino = ((daily_ret.mean() - 0.035/252) / downside * np.sqrt(252)) if downside > 0 else 0
-
-        # Calmar
-        ann_ret = daily_ret.mean() * 252
-        calmar = (ann_ret / abs(mdd/100)) if mdd != 0 else 0
+        # Sharpe/Sortino/Calmar — 견고한 quant.metrics 사용.
+        #   (거래가 없어 자본곡선이 평평하면 분산≈0 → 예전 코드는 부동소수점 미세값으로
+        #    가드를 통과해 Sharpe가 ±1e16 로 폭주했다. qmet 은 std<eps 시 0을 반환.)
+        ret_arr = daily_ret.to_numpy()
+        if len(ret_arr) < 2 or float(np.nanstd(ret_arr)) < 1e-10:
+            sharpe = sortino = calmar = 0.0
+        else:
+            sharpe = qmet.sharpe_ratio(ret_arr, rf=0.035, periods_per_year=252)
+            sortino = qmet.sortino_ratio(ret_arr, rf=0.035, periods_per_year=252)
+            calmar = qmet.calmar_ratio(ret_arr, periods_per_year=252)
 
         # 거래 통계
         sells = [t for t in trades if t['type'] == 'SELL']
@@ -278,6 +326,18 @@ class AdvancedBacktestEngine:
         gross_loss = abs(sum(t['profit_pct'] for t in losses)) if losses else 1
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0
 
+        # ★ 통계적 유의성: 백테스트 샤프가 '운'이 아닌지 검증
+        #   - PSR: 진짜 샤프 > 0 일 확률(표본길이·왜도·첨도 보정)
+        #   - DSR: n_trials 회 시도했을 때 기대 최대 샤프를 허들로 한 보정 샤프
+        #   거래가 거의 없으면(자본곡선 평평) 통계적 의미가 없으므로 None 처리.
+        if len(sells) < 3 or len(ret_arr) < 5 or float(np.nanstd(ret_arr)) < 1e-10:
+            psr = None
+            dsr = {"deflated_sharpe": None, "passes": None,
+                   "n_trials": max(self.config.n_trials, 1)}
+        else:
+            psr = round(float(qval.probabilistic_sharpe_ratio(ret_arr, benchmark_sr=0.0)), 4)
+            dsr = qval.deflated_sharpe_ratio(ret_arr, n_trials=max(self.config.n_trials, 1))
+
         return {
             "initial_capital": initial,
             "final_capital": round(final),
@@ -293,6 +353,11 @@ class AdvancedBacktestEngine:
             "avg_loss_pct": round(avg_loss, 2),
             "total_commission": round(total_comm),
             "total_tax": round(total_tax),
+            # ★ 과적합/유의성 진단
+            "probabilistic_sharpe": psr,
+            "deflated_sharpe": dsr.get("deflated_sharpe"),
+            "dsr_passes": dsr.get("passes"),
+            "n_trials": dsr.get("n_trials"),
             "trades": trades,
             "equity_curve": equity_curve,
         }

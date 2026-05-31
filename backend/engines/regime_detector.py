@@ -61,9 +61,14 @@ class RegimeDetector:
         [0.08,  0.07,  0.85],  # from sideways
     ])
 
+    _REGIME_ORDER = ["bull", "bear", "sideways"]   # TRANSITION_MATRIX 행/열 순서
+
     def __init__(self):
         self._current_state: Optional[RegimeState] = None
         self._history: list = []
+        # HMM forward filter 의 사후확률(은닉상태 belief). 균등사전에서 출발.
+        self._posterior = np.array([1 / 3, 1 / 3, 1 / 3])
+        self._regime_duration = 0
 
     def detect(self, kospi_df: pd.DataFrame = None,
                returns: pd.Series = None,
@@ -185,22 +190,48 @@ class RegimeDetector:
         }
 
     def _combine_signals(self, signals: Dict[str, Dict[str, float]]) -> RegimeState:
-        """다중 시그널 종합"""
+        """
+        다중 시그널 종합 → HMM forward filter.
+
+        각 시그널의 순간 확률벡터를 곱(로그합)해 '관측 우도(emission likelihood)'를
+        만들고, 전이행렬로 예측한 사전과 베이지안 결합한다:
+            predict :  prior_t   = posterior_{t-1} · TRANSITION_MATRIX
+            update  :  posterior ∝ prior_t ⊙ likelihood_t
+        이로써 레짐 추정이 한 시점 노이즈에 휙휙 흔들리지 않고 시간적으로 매끄럽게
+        이어진다(전이행렬이 비로소 '사용'된다).
+        """
         if not signals:
             return RegimeState()
 
-        # 가중 평균 (각 시그널 동등 가중)
-        combined = {"bull": 0, "bear": 0, "sideways": 0}
+        # 1) 관측 우도: 각 시그널 확률벡터의 기하평균(로그공간 합) → 합의가 강하면 뾰족
+        order = self._REGIME_ORDER
+        log_lik = np.zeros(3)
         for probs in signals.values():
-            for regime, prob in probs.items():
-                combined[regime] += prob
-        total = sum(combined.values())
-        for k in combined:
-            combined[k] /= total
+            vec = np.array([max(probs.get(r, 1e-6), 1e-6) for r in order])
+            log_lik += np.log(vec)
+        likelihood = np.exp(log_lik - log_lik.max())
+        likelihood = likelihood / likelihood.sum()
+
+        # 2) predict: 전이행렬로 사전 전개
+        prior = self._posterior @ self.TRANSITION_MATRIX
+
+        # 3) update: 사후 ∝ 사전 ⊙ 우도
+        posterior = prior * likelihood
+        s = posterior.sum()
+        posterior = posterior / s if s > 0 else np.array([1 / 3, 1 / 3, 1 / 3])
+        self._posterior = posterior
+
+        combined = {order[i]: float(posterior[i]) for i in range(3)}
 
         # 최고 확률 레짐
         current = max(combined, key=combined.get)
         confidence = combined[current]
+
+        # 레짐 지속일수 추적
+        if self._current_state and self._current_state.current_regime == current:
+            self._regime_duration += 1
+        else:
+            self._regime_duration = 0
 
         # 변동성 레짐
         vol_regime = "normal"
@@ -222,12 +253,18 @@ class RegimeDetector:
         elif vol_regime == "extreme":
             risk_mult *= 0.3
 
+        # 다음 시점 '레짐 이탈' 확률 = 1 − P(현 레짐 유지) (전이행렬 대각 사용)
+        cur_idx = order.index(current)
+        stay_prob = float(self.TRANSITION_MATRIX[cur_idx, cur_idx])
+        transition_prob = round(1 - stay_prob, 3)
+
         state = RegimeState(
             current_regime=current,
-            regime_probability=combined,
+            regime_probability={k: round(v, 4) for k, v in combined.items()},
+            regime_duration_days=self._regime_duration,
             volatility_regime=vol_regime,
             risk_multiplier=round(risk_mult, 2),
-            transition_probability=round(1 - confidence, 3),
+            transition_probability=transition_prob,
         )
 
         self._current_state = state

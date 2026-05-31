@@ -31,6 +31,9 @@ class LiveStrategyEngine(BaseStrategyEngine):
         self._sentiment_engine = None
         self._flow_analyzer = None
         self._current_regime = "sideways"
+        # ★ 횡단면 팩터 점수 캐시 (prime_factor_scores 로 1회 일괄 채점 후 evaluate가 참조)
+        self._factor_scores: Dict[str, "object"] = {}
+        self._factor_ic_history: List[dict] = []
         # 단기 고점 회복 전담 분리 엔진
         self.recovery_strategy = DeepRecoveryStrategy(self.alpha_engine, None)
 
@@ -44,6 +47,36 @@ class LiveStrategyEngine(BaseStrategyEngine):
         self._regime_detector = regime_detector
         self._sentiment_engine = sentiment_engine
         self._flow_analyzer = flow_analyzer
+
+    def prime_factor_scores(self, records: List[dict]) -> List:
+        """
+        ★ 유니버스 전체를 1회 횡단면 채점해 캐시한다.
+
+        evaluate() 는 종목별로 호출되므로 그 안에서는 횡단면 표준화가 불가능하다
+        (동종 비교군이 없음). 매 평가 사이클 시작에 후보 전체(records)를 모아 이 메서드를
+        한 번 호출하면, 이후 evaluate() 들이 캐시된 '유니버스 상대' 팩터점수를 사용한다.
+
+        records: [{"ticker","name","sector","market_cap","fundamentals","price_data"}, ...]
+        """
+        if not self._factor_model or not records:
+            return []
+        try:
+            scores = self._factor_model.score_universe(records)
+            self._factor_scores = {s.ticker: s for s in scores}
+            return scores
+        except Exception as e:
+            logger.warning(f"횡단면 팩터 채점 실패: {e}")
+            return []
+
+    def record_factor_ic(self, forward_returns: Dict[str, float]) -> dict:
+        """직전 사이클의 횡단면 점수 vs 실현 전방수익률로 IC를 기록(팩터 유효성 추적)."""
+        if not self._factor_model or not self._factor_scores:
+            return {}
+        ic = self._factor_model.compute_factor_ic(
+            list(self._factor_scores.values()), forward_returns)
+        if ic:
+            self._factor_ic_history.append(ic)
+        return ic
 
     async def evaluate(self, ticker: str, stock_info: StockInfo,
                        price_history: List[OHLCV], indicators: dict,
@@ -110,15 +143,22 @@ class LiveStrategyEngine(BaseStrategyEngine):
                 logger.warning(f"딥러닝 예측 실패 [{ticker}]: {e}")
 
         # 6. 팩터 모델 점수
+        #    우선순위: prime_factor_scores() 로 캐시된 '횡단면(유니버스 상대)' 점수 →
+        #    없으면 종목별 절대 스코어로 폴백. 횡단면 표준화가 퀀트 정석이므로,
+        #    가능하면 매 사이클 prime_factor_scores() 를 먼저 호출하는 것을 권장.
         factor_score = None
         if self._factor_model:
             try:
-                fundamentals = market_context.get("fundamentals", {})
-                fs = self._factor_model.score_stock(
-                    ticker, fundamentals, df,
-                    market_cap=stock_info.market_cap if stock_info else 0
-                )
-                factor_score = fs.composite_score
+                cached = self._factor_scores.get(ticker)
+                if cached is not None:
+                    factor_score = cached.composite_score   # 횡단면 표준화 점수(0-100)
+                else:
+                    fundamentals = market_context.get("fundamentals", {})
+                    fs = self._factor_model.score_stock(
+                        ticker, fundamentals, df,
+                        market_cap=stock_info.market_cap if stock_info else 0
+                    )
+                    factor_score = fs.composite_score
             except Exception as e:
                 logger.warning(f"팩터 모델 실패 [{ticker}]: {e}")
 

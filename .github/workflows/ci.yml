@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  backend-tests:
+    name: Backend quant tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 프로젝트 실제 의존성(pydantic 등 포함) + pytest.
+          # 통합 테스트가 엔진/모델을 임포트하므로 requirements 전체가 필요하다.
+          pip install -r backend/requirements.txt
+          pip install pytest
+
+      - name: Run quant correctness test suite
+        run: |
+          pytest backend/tests -q
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install and build
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build

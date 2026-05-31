@@ -8,6 +8,7 @@ import StrategyLog from './pages/StrategyLog'
 import Settings from './pages/Settings'
 import KillSwitchPanel from './pages/KillSwitchPanel'
 import Backtester from './pages/Backtester'
+import QuantAnalytics from './pages/QuantAnalytics'
 import useStore from './store/useStore'
 
 function Sidebar({ killSwitchActive, onToggleKillSwitch }) {
@@ -38,6 +39,9 @@ function Sidebar({ killSwitchActive, onToggleKillSwitch }) {
           </NavLink>
           <NavLink to="/backtest" className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
             <span className="nav-icon">🔄</span> 백테스트
+          </NavLink>
+          <NavLink to="/quant" className={({isActive}) => `nav-item ${isActive ? 'active' : ''}`}>
+            <span className="nav-icon">🧮</span> 퀀트 분석
           </NavLink>
         </div>
         <div className="nav-section">
@@ -88,6 +92,7 @@ function Header() {
     '/orders': '주문/체결 모니터',
     '/strategy-log': '전략 로그',
     '/backtest': '백테스터',
+    '/quant': '퀀트 분석',
     '/settings': '설정',
     '/kill-switch': '킬스위치 패널',
   }
@@ -156,6 +161,7 @@ export default function App() {
               <Route path="/orders" element={<OrderMonitor />} />
               <Route path="/strategy-log" element={<StrategyLog />} />
               <Route path="/backtest" element={<Backtester />} />
+              <Route path="/quant" element={<QuantAnalytics />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/kill-switch" element={<KillSwitchPanel />} />
             </Routes>

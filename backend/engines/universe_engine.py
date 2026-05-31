@@ -116,6 +116,37 @@ class UniverseScreener:
         self._screened = results
         return results
 
+    def rank_by_factors(self, records: List[dict], factor_model,
+                        top_n: int = None) -> List[ScreeningResult]:
+        """
+        ★ 진짜 멀티팩터 랭킹 (이전 screen()은 필터링만 하고 랭킹은 미구현이었음).
+
+        factor_model.score_universe() 로 유니버스를 횡단면 표준화 채점한 뒤
+        composite_z(유니버스 상대 점수) 내림차순으로 랭킹한다.
+
+        records: [{"ticker","name","sector","market_cap","fundamentals","price_data"}, ...]
+        반환: composite_score/percentile/세부 팩터점수가 채워진 ScreeningResult 리스트.
+        """
+        if not records or factor_model is None:
+            return []
+        scores = factor_model.score_universe(records)
+        meta = {r["ticker"]: r for r in records}
+        results = []
+        for s in scores:
+            r = meta.get(s.ticker, {})
+            results.append(ScreeningResult(
+                ticker=s.ticker, name=s.name or r.get("name", ""),
+                sector=r.get("sector", ""), market=r.get("market", "KOSPI"),
+                market_cap=r.get("market_cap", 0),
+                score=s.composite_score, rank=s.rank,
+                signals={
+                    "composite_z": s.composite_z, "percentile": s.percentile,
+                    **s.factors_detail,
+                },
+            ))
+        self._screened = results
+        return results[:top_n] if top_n else results
+
     def get_sector_rotation(self, sector_scores: Dict[str, float]) -> List[str]:
         """섹터 로테이션 기반 추천 섹터"""
         sorted_sectors = sorted(sector_scores.items(), key=lambda x: x[1], reverse=True)
