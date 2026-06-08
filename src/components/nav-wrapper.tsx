@@ -15,6 +15,7 @@ import {
   Settings as SettingsIcon,
   Activity
 } from "lucide-react";
+import { initAutoSync } from "@/lib/sync";
 
 export default function NavWrapper({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -24,6 +25,9 @@ export default function NavWrapper({ children }: { children: React.ReactNode }) 
   // 온보딩 및 위기 체크
   useEffect(() => {
     if (typeof window !== "undefined") {
+      // PWA 자동 백그라운드 동기화 기동
+      initAutoSync();
+
       // 1. 위기 이벤트 발생 여부 검사 (가장 최우선 순위)
       const events = localDB.getSafetyEvents();
       const phqResults = localDB.getScreeningResults();

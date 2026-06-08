@@ -3,13 +3,73 @@
 import { useEffect, useState } from "react";
 import { localDB, MindfulnessSession } from "@/lib/local-storage";
 import { mindfulnessExercises } from "@/lib/seed-data";
-import { Sparkles, ChevronRight, Play, AlertTriangle, CheckCircle, Clock } from "lucide-react";
+import { Sparkles, ChevronRight, Play, AlertTriangle, CheckCircle, Clock, Volume2, VolumeX, Music, Heart } from "lucide-react";
+import { soundscape } from "@/lib/soundscape";
 
 export default function MindfulnessPage() {
   const [sessions, setSessions] = useState<MindfulnessSession[]>([]);
   const [selectedExercise, setSelectedExercise] = useState<typeof mindfulnessExercises[0] | null>(null);
   const [currentStep, setCurrentStep] = useState<number>(0);
   const [showWarningAlert, setShowWarningAlert] = useState<boolean>(false);
+
+  // 호흡 페이서 상태
+  const [breathPhase, setBreathPhase] = useState<"IN" | "HOLD" | "OUT">("IN");
+  const [breathSeconds, setBreathSeconds] = useState<number>(4);
+  const [isBreathingActive, setIsBreathingActive] = useState<boolean>(false);
+  
+  // 사운드스케이프 오디오 재생 상태
+  const [rainActive, setRainActive] = useState<boolean>(false);
+  const [bowlActive, setBowlActive] = useState<boolean>(false);
+  const [rainVolume, setRainVolume] = useState<number>(0.3);
+
+  // 호흡 페이서 타이머 루프
+  useEffect(() => {
+    let timer: any = null;
+    if (isBreathingActive && selectedExercise) {
+      timer = setInterval(() => {
+        setBreathSeconds(prev => {
+          if (prev <= 1) {
+            if (breathPhase === "IN") {
+              setBreathPhase("HOLD");
+              return 7; // 멈춤 7초
+            } else if (breathPhase === "HOLD") {
+              setBreathPhase("OUT");
+              return 8; // 날숨 8초
+            } else {
+              setBreathPhase("IN");
+              return 4; // 들숨 4초
+            }
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [isBreathingActive, breathPhase, selectedExercise]);
+
+  // 사운드스케이프 제어 감지 및 정리
+  useEffect(() => {
+    if (rainActive) {
+      soundscape.startRain(rainVolume);
+    } else {
+      soundscape.stopRain();
+    }
+  }, [rainActive]);
+
+  useEffect(() => {
+    if (bowlActive) {
+      soundscape.startBowlLoop(0.4, 18);
+    } else {
+      soundscape.stopBowlLoop();
+    }
+  }, [bowlActive]);
+
+  // 언마운트 시 사운드 완전 종료
+  useEffect(() => {
+    return () => {
+      soundscape.stopAll();
+    };
+  }, []);
 
   useEffect(() => {
     loadSessions();
@@ -98,6 +158,129 @@ export default function MindfulnessPage() {
                 <p className="text-sm text-gray-700 leading-relaxed font-medium transition-all">
                   {selectedExercise.steps[currentStep]}
                 </p>
+              </div>
+
+              {/* 호흡 가이드 및 사운드 제어 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-gray-100 pt-4">
+                
+                {/* 1. 시각적 호흡 페이서 */}
+                <div className="bg-[#f8faf7] border border-[#e4e7e3] p-4 rounded-2xl flex flex-col items-center justify-center text-center space-y-4 min-h-[200px]">
+                  <h3 className="text-xs font-bold text-[#4a6c4c] flex items-center gap-1.5">
+                    <Heart className="w-3.5 h-3.5 fill-[#4a6c4c]" /> 호흡 페이서 (4-7-8 템포)
+                  </h3>
+                  
+                  {isBreathingActive ? (
+                    <div className="space-y-3 flex flex-col items-center">
+                      {/* 맥동하는 서클 애니메이션 */}
+                      <div className="relative w-24 h-24 flex items-center justify-center">
+                        <div 
+                          className="absolute bg-[#4a6c4c]/10 rounded-full border border-[#4a6c4c]/30 transition-all duration-1000 ease-in-out"
+                          style={{
+                            width: breathPhase === "IN" ? "96px" : breathPhase === "HOLD" ? "96px" : "40px",
+                            height: breathPhase === "IN" ? "96px" : breathPhase === "HOLD" ? "96px" : "40px",
+                          }}
+                        />
+                        <div 
+                          className="absolute bg-[#4a6c4c] text-white rounded-full flex flex-col items-center justify-center font-bold text-xs calm-shadow transition-all duration-1000 ease-in-out"
+                          style={{
+                            width: breathPhase === "IN" ? "80px" : breathPhase === "HOLD" ? "80px" : "48px",
+                            height: breathPhase === "IN" ? "80px" : breathPhase === "HOLD" ? "80px" : "48px",
+                          }}
+                        >
+                          <span className="text-[10px] opacity-80">
+                            {breathPhase === "IN" ? "들이마시기" : breathPhase === "HOLD" ? "멈추기" : "내쉬기"}
+                          </span>
+                          <span className="text-xs mt-0.5">{breathSeconds}초</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setIsBreathingActive(false)}
+                        className="text-[10px] text-gray-400 hover:text-gray-600 underline font-semibold"
+                      >
+                        호흡 페이서 일시정지
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-gray-400 leading-normal">
+                        호흡 리듬을 시각 애니메이션에 맞춰 정돈해 줍니다.
+                      </p>
+                      <button
+                        onClick={() => {
+                          setBreathPhase("IN");
+                          setBreathSeconds(4);
+                          setIsBreathingActive(true);
+                        }}
+                        className="px-3 py-1.5 bg-[#4a6c4c] text-white text-[11px] font-bold rounded-lg hover:bg-[#3b573d] transition-all"
+                      >
+                        호흡 리듬 가이드 시작
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. 사운드스케이프 (빗소리 및 싱잉볼) */}
+                <div className="bg-[#f8faf7] border border-[#e4e7e3] p-4 rounded-2xl flex flex-col justify-center space-y-4">
+                  <h3 className="text-xs font-bold text-[#4a6c4c] flex items-center gap-1.5">
+                    <Music className="w-3.5 h-3.5 text-[#d89657] fill-[#d89657]" /> 명상 백그라운드 자연음 합성
+                  </h3>
+                  <p className="text-[10px] text-gray-400 leading-normal">
+                    Web Audio 기술로 외부 서버 연결 없이도 자연 주파수 오디오를 실시간 합성합니다.
+                  </p>
+                  
+                  <div className="space-y-3 text-xs">
+                    {/* 빗소리 토글 */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <label className="font-semibold text-gray-600 flex items-center gap-1.5 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={rainActive}
+                            onChange={(e) => setRainActive(e.target.checked)}
+                            className="rounded text-[#4a6c4c] focus:ring-[#4a6c4c] w-3.5 h-3.5"
+                          />
+                          잔잔한 빗소리 재생
+                        </label>
+                        <span className="text-[10px] text-gray-400 font-bold">{Math.round(rainVolume * 100)}%</span>
+                      </div>
+                      {rainActive && (
+                        <input 
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          value={rainVolume}
+                          onChange={(e) => {
+                            const vol = parseFloat(e.target.value);
+                            setRainVolume(vol);
+                            soundscape.setRainVolume(vol);
+                          }}
+                          className="w-full accent-[#4a6c4c] h-1 bg-gray-200 rounded-lg cursor-pointer"
+                        />
+                      )}
+                    </div>
+
+                    {/* 싱잉볼 토글 */}
+                    <div className="flex justify-between items-center pt-1 border-t border-gray-100/60">
+                      <label className="font-semibold text-gray-600 flex items-center gap-1.5 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={bowlActive}
+                          onChange={(e) => setBowlActive(e.target.checked)}
+                          className="rounded text-[#4a6c4c] focus:ring-[#4a6c4c] w-3.5 h-3.5"
+                        />
+                        티베트 싱잉볼 공명 벨 (18초 간격)
+                      </label>
+                      <button
+                        onClick={() => soundscape.playBowlOnce(0.5)}
+                        className="px-2 py-1 bg-white border border-gray-200 rounded text-[10px] font-bold text-gray-500 hover:bg-gray-50 transition-all shrink-0"
+                      >
+                        1회 강제 연주
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
               </div>
 
               {/* 제어 버튼 */}

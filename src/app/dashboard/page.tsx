@@ -271,11 +271,16 @@ export default function Dashboard() {
 
       {/* 2. 주간 기분 흐름 트렌드 (비진단 차트) */}
       <div className="bg-white rounded-2xl p-5 border border-[#e4e7e3] calm-shadow space-y-3">
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center flex-wrap gap-2">
           <h2 className="text-sm font-bold text-[#4a6c4c]">최근 기분 추이 (주간 트렌드)</h2>
-          <Link href="/screening" className="text-[11px] font-semibold text-[#4a6c4c] bg-[#eaf2eb] px-2 py-1 rounded hover:bg-[#cbe1cd]/40 transition-colors flex items-center gap-0.5">
-            <FileSpreadsheet className="w-3 h-3" /> 우울/불안 자가선별 (PHQ-9)
-          </Link>
+          <div className="flex items-center gap-1.5">
+            <Link href="/analytics" className="text-[11px] font-semibold text-[#4a6c4c] bg-[#eaf2eb] px-2 py-1 rounded hover:bg-[#cbe1cd]/40 transition-colors flex items-center gap-0.5">
+              <Activity className="w-3.5 h-3.5" /> 상세 분석 보고서
+            </Link>
+            <Link href="/screening" className="text-[11px] font-semibold text-gray-500 bg-gray-50 border border-gray-200 px-2 py-1 rounded hover:bg-gray-100 transition-colors flex items-center gap-0.5">
+              <FileSpreadsheet className="w-3 h-3" /> 우울 자가선별 (PHQ-9)
+            </Link>
+          </div>
         </div>
         
         {renderTrendChart()}

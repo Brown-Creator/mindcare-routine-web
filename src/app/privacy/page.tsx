@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { localDB, UserConsent } from "@/lib/local-storage";
-import { ShieldCheck, Download, Trash2, CheckCircle2, RefreshCw } from "lucide-react";
+import { ShieldCheck, Download, Trash2, CheckCircle2, RefreshCw, Lock, Unlock, EyeOff } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { isE2eeEnabled, getSessionPassword, setSessionPassword, clearSessionPassword, encryptText, decryptText } from "@/lib/crypto";
 
 export default function PrivacySettingsPage() {
   const router = useRouter();
@@ -11,9 +12,74 @@ export default function PrivacySettingsPage() {
   const [deleteConfirmed, setDeleteConfirmed] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string>("로컬 저장소 전용 (로그인 없음)");
 
+  // E2EE 암호화 관련 상태
+  const [e2eeEnabled, setE2eeEnabled] = useState<boolean>(false);
+  const [masterPassword, setMasterPassword] = useState<string>("");
+  const [inputPassword, setInputPassword] = useState<string>("");
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
+  const [e2eeError, setE2eeError] = useState<string>("");
+
   useEffect(() => {
     loadConsent();
+    const enabled = isE2eeEnabled();
+    setE2eeEnabled(enabled);
+    if (enabled) {
+      const pw = getSessionPassword();
+      setIsUnlocked(!!pw);
+    }
   }, []);
+
+  const handleEnableE2ee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (masterPassword.length < 4) {
+      setE2eeError("마스터 비밀번호는 최소 4자 이상이어야 합니다.");
+      return;
+    }
+    try {
+      const testEnc = await encryptText("session_test", masterPassword);
+      localStorage.setItem("mindcare_e2ee_enabled", "true");
+      localStorage.setItem("mindcare_e2ee_test", testEnc);
+      setSessionPassword(masterPassword);
+      setE2eeEnabled(true);
+      setIsUnlocked(true);
+      setMasterPassword("");
+      setE2eeError("");
+      alert("종단간 암호화(E2EE)가 성공적으로 활성화되었습니다! 이제 성찰 일지와 CBT 사고 기록지가 마스터 비밀번호로 암호화되어 보관됩니다.");
+    } catch (err) {
+      console.error(err);
+      setE2eeError("암호화 활성화 처리 중 에러가 발생했습니다.");
+    }
+  };
+
+  const handleUnlockE2ee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const testEnc = localStorage.getItem("mindcare_e2ee_test") || "";
+    if (!testEnc) {
+      setE2eeError("암호화 테스트 데이터가 누락되었습니다. E2EE를 재설정해 주세요.");
+      return;
+    }
+    const dec = await decryptText(testEnc, inputPassword);
+    if (dec === "session_test") {
+      setSessionPassword(inputPassword);
+      setIsUnlocked(true);
+      setInputPassword("");
+      setE2eeError("");
+      alert("종단간 암호화 잠금이 해제되었습니다.");
+    } else {
+      setE2eeError("잘못된 비밀번호입니다. 다시 입력해 주세요.");
+    }
+  };
+
+  const handleDisableE2ee = () => {
+    if (confirm("🚨 경고: E2EE를 비활성화하면 앞으로 작성할 데이터는 평문으로 저장되지만, 이미 암호화된 기존 데이터들은 복호화할 마스터 비밀번호가 유실될 경우 영구히 읽을 수 없게 됩니다. 비활성화하시겠습니까?")) {
+      localStorage.removeItem("mindcare_e2ee_enabled");
+      localStorage.removeItem("mindcare_e2ee_test");
+      clearSessionPassword();
+      setE2eeEnabled(false);
+      setIsUnlocked(false);
+      alert("종단간 암호화(E2EE)가 비활성화되었습니다.");
+    }
+  };
 
   const loadConsent = () => {
     if (typeof window !== "undefined") {
@@ -121,6 +187,85 @@ export default function PrivacySettingsPage() {
           </div>
         ) : (
           <p className="text-xs text-gray-400">동의 이력이 저장되지 않았습니다.</p>
+        )}
+      </div>
+
+      {/* Zero-Knowledge E2EE Settings */}
+      <div className="bg-white rounded-2xl p-5 border border-[#e4e7e3] calm-shadow space-y-4">
+        <h2 className="text-sm font-bold text-[#4a6c4c] border-b border-gray-50 pb-2 flex items-center gap-1.5">
+          <ShieldCheck className="w-4.5 h-4.5 text-emerald-600" /> Zero-Knowledge 종단간 암호화 (E2EE)
+        </h2>
+        <p className="text-[11px] text-gray-500 leading-relaxed">
+          마스터 비밀번호를 설정하면 브라우저 내에서 사용자의 모든 성찰 일지 및 CBT 기록지 텍스트가 암호화(AES-GCM-256)되어 기기에 쓰입니다. 저희 서버나 데이터베이스 관리자도 이를 해독할 수 없으며 본인 기기에서만 복호화할 수 있습니다.
+        </p>
+
+        {!e2eeEnabled ? (
+          <form onSubmit={handleEnableE2ee} className="space-y-3 pt-1">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-500">신규 마스터 비밀번호 설정</label>
+              <input 
+                type="password"
+                value={masterPassword}
+                onChange={(e) => setMasterPassword(e.target.value)}
+                placeholder="4자 이상의 마스터 비밀번호 입력"
+                className="w-full text-xs p-2.5 bg-[#f8faf7] border border-[#e4e7e3] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#4a6c4c]"
+              />
+            </div>
+            {e2eeError && <p className="text-[10px] text-red-500 font-semibold">{e2eeError}</p>}
+            <button
+              type="submit"
+              className="w-full py-2.5 bg-[#4a6c4c] hover:bg-[#3b573d] text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              종단간 암호화(E2EE) 활성화
+            </button>
+          </form>
+        ) : (
+          <div className="space-y-3 pt-1">
+            <div className="flex justify-between items-center bg-[#f8faf7] p-3 rounded-xl border border-gray-100 text-xs">
+              <span className="font-semibold text-gray-500">보안 상태</span>
+              {isUnlocked ? (
+                <span className="text-emerald-700 font-bold flex items-center gap-1">
+                  <Unlock className="w-3.5 h-3.5 text-emerald-600" /> 잠금 해제됨 (조회 및 저장 가능)
+                </span>
+              ) : (
+                <span className="text-red-600 font-bold flex items-center gap-1">
+                  <Lock className="w-3.5 h-3.5 text-red-500" /> 암호 잠김 (조회 차단됨)
+                </span>
+              )}
+            </div>
+
+            {!isUnlocked ? (
+              <form onSubmit={handleUnlockE2ee} className="space-y-3">
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-gray-500">E2EE 잠금 해제 암호</label>
+                  <input 
+                    type="password"
+                    value={inputPassword}
+                    onChange={(e) => setInputPassword(e.target.value)}
+                    placeholder="비밀번호 입력"
+                    className="w-full text-xs p-2.5 bg-[#f8faf7] border border-[#e4e7e3] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#4a6c4c]"
+                  />
+                </div>
+                {e2eeError && <p className="text-[10px] text-red-500 font-semibold">{e2eeError}</p>}
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  E2EE 잠금 해제
+                </button>
+              </form>
+            ) : (
+              <button
+                onClick={handleDisableE2ee}
+                className="w-full py-2.5 bg-white border border-red-200 hover:bg-red-50 text-red-600 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+              >
+                <EyeOff className="w-3.5 h-3.5" />
+                종단간 암호화(E2EE) 비활성화
+              </button>
+            )}
+          </div>
         )}
       </div>
 

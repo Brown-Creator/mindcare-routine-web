@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { localDB, JournalEntry } from "@/lib/local-storage";
 import { journalPrompts } from "@/lib/seed-data";
-import { Calendar, HelpCircle, Save, BookOpen, Trash2, Sparkles, Loader2, ChevronRight } from "lucide-react";
+import { Calendar, HelpCircle, Save, BookOpen, Trash2, Sparkles, Loader2, ChevronRight, Lock, Unlock } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { encryptText, decryptText, isE2eeEnabled, getSessionPassword, setSessionPassword } from "@/lib/crypto";
 
 export default function JournalPage() {
   const router = useRouter();
@@ -20,13 +21,41 @@ export default function JournalPage() {
   const [aiResponse, setAiResponse] = useState<string>("");
   const [isAiLoading, setIsAiLoading] = useState<boolean>(false);
 
+  // E2EE 추가 상태
+  const [isLocked, setIsLocked] = useState<boolean>(false);
+  const [lockPassword, setLockPassword] = useState<string>("");
+  const [e2eeError, setE2eeError] = useState<string>("");
+
   useEffect(() => {
-    loadEntries();
+    checkLockState();
   }, []);
 
-  const loadEntries = () => {
+  const checkLockState = () => {
+    const enabled = isE2eeEnabled();
+    const pw = getSessionPassword();
+    if (enabled && !pw) {
+      setIsLocked(true);
+    } else {
+      setIsLocked(false);
+      loadEntries(pw);
+    }
+  };
+
+  const loadEntries = async (password?: string | null) => {
     const saved = localDB.getJournalEntries();
-    setEntries(saved);
+    const activePassword = password || getSessionPassword();
+    if (activePassword) {
+      const decrypted = await Promise.all(saved.map(async (entry) => {
+        const decryptedContent = await decryptText(entry.answers.content, activePassword);
+        return {
+          ...entry,
+          answers: { ...entry.answers, content: decryptedContent }
+        };
+      }));
+      setEntries(decrypted);
+    } else {
+      setEntries(saved);
+    }
   };
 
   const handleSelectPrompt = (prompt: typeof journalPrompts[0]) => {
@@ -71,7 +100,26 @@ export default function JournalPage() {
     }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleUnlock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const testEnc = localStorage.getItem("mindcare_e2ee_test") || "";
+    if (!testEnc) {
+      setE2eeError("암호화 테스트 데이터가 유실되었습니다. 설정에서 재설정하세요.");
+      return;
+    }
+    const dec = await decryptText(testEnc, lockPassword);
+    if (dec === "session_test") {
+      setSessionPassword(lockPassword);
+      setIsLocked(false);
+      setLockPassword("");
+      setE2eeError("");
+      loadEntries(lockPassword);
+    } else {
+      setE2eeError("잘못된 비밀번호입니다.");
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!answer.trim()) {
@@ -81,11 +129,14 @@ export default function JournalPage() {
 
     if (selectedPrompt) {
       setIsSubmitting(true);
+      const password = getSessionPassword();
+      const finalAnswer = password ? await encryptText(answer, password) : answer;
+
       const { crisisTriggered } = localDB.saveJournalEntry({
         promptId: selectedPrompt.id,
         promptText: selectedPrompt.prompt,
         answers: {
-          content: answer
+          content: finalAnswer
         }
       });
 
@@ -94,11 +145,41 @@ export default function JournalPage() {
       } else {
         setSelectedPrompt(null);
         setAnswer("");
-        loadEntries();
+        loadEntries(password);
       }
       setIsSubmitting(false);
     }
   };
+
+  if (isLocked) {
+    return (
+      <div className="max-w-md mx-auto my-12 bg-white rounded-2xl p-6 border border-[#e4e7e3] calm-shadow text-center space-y-5 animate-fade-in">
+        <Lock className="w-12 h-12 text-[#d89657] mx-auto" />
+        <div className="space-y-1">
+          <h1 className="text-base font-bold text-[#1e291b]">E2EE 저널 보관함 잠김</h1>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            성찰 일지가 기기 수준에서 강력하게 종단간 암호화(E2EE) 처리되어 있습니다. 일지를 조회하고 작성하려면 설정하신 마스터 비밀번호를 입력해 잠금을 해제해 주세요.
+          </p>
+        </div>
+        <form onSubmit={handleUnlock} className="space-y-3 text-left">
+          <input 
+            type="password"
+            value={lockPassword}
+            onChange={(e) => setLockPassword(e.target.value)}
+            placeholder="마스터 비밀번호 입력"
+            className="w-full text-xs p-3 bg-[#f8faf7] border border-[#e4e7e3] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#4a6c4c]"
+          />
+          {e2eeError && <p className="text-[10px] text-red-500 font-semibold">{e2eeError}</p>}
+          <button
+            type="submit"
+            className="w-full py-3 bg-[#4a6c4c] hover:bg-[#3b573d] text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+          >
+            <Unlock className="w-4 h-4" /> 잠금 해제 및 복호화
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
